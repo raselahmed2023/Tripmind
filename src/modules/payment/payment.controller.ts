@@ -5,15 +5,15 @@ import { ApiError } from '../../utils/ApiError';
 import * as paymentService from './payment.service';
 import * as subscriptionService from '../subscription/subscription.service';
 import * as stripeService from './stripe.service';
+import { User } from '../user/user.model';
+import { Payment } from './payment.model';
 
 export const createCheckoutSession = async (req: Request, res: Response) => {
   const { productType } = req.body;
   const userId = req.user!.userId;
   const email = req.user!.email;
 
-  const user = await import('../user/user.model').then((m) =>
-    m.User.findById(userId).select('name email'),
-  );
+  const user = await User.findById(userId).select('name email');
   const name = user?.name || email;
 
   const result = await paymentService.createCheckoutSession(userId, email, name, {
@@ -55,9 +55,7 @@ export const webhook = async (req: Request, res: Response) => {
           await subscriptionService.handleSubscriptionCreated(stripeSub);
         }
       } else if (productType === 'credit_pack') {
-        const payment = await import('./payment.model').then((m) =>
-          m.Payment.findOne({ stripeCheckoutSessionId: session.id }),
-        );
+        const payment = await Payment.findOne({ stripeCheckoutSessionId: session.id });
         if (payment) {
           await subscriptionService.handleCreditPackPurchase(payment);
         }

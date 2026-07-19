@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../../utils/ApiResponse';
 import * as destinationService from './destination.service';
-import { destinationQuerySchema } from './destination.validation';
+import { destinationQuerySchema, adminDestinationQuerySchema } from './destination.validation';
 
 export const createDestination = async (req: Request, res: Response) => {
   const destination = await destinationService.createDestination(req.body, req.user!.userId);
@@ -20,6 +20,26 @@ export const getAllDestinations = async (req: Request, res: Response) => {
     result.pagination.limit,
     result.pagination.total,
   );
+};
+
+export const getAllDestinationsAdmin = async (req: Request, res: Response) => {
+  const query = adminDestinationQuerySchema.parse(req.query);
+  const result = await destinationService.getAllDestinationsAdmin(query);
+
+  ApiResponse.paginated(
+    res,
+    'Destinations fetched successfully',
+    result.destinations,
+    result.pagination.page,
+    result.pagination.limit,
+    result.pagination.total,
+  );
+};
+
+export const getDestinationById = async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const destination = await destinationService.getDestinationById(id);
+  ApiResponse.success(res, 'Destination fetched successfully', destination);
 };
 
 export const getDestinationBySlug = async (req: Request, res: Response) => {

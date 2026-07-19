@@ -4,6 +4,8 @@ import { Destination } from './destination.model';
 import { IDestination, IDestinationQuery } from './destination.interface';
 import { ApiError } from '../../utils/ApiError';
 
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const buildSortObject = (sort: string): Record<string, 1 | -1> => {
   switch (sort) {
     case 'highest_rating': return { rating: -1 };
@@ -29,20 +31,72 @@ export const createDestination = async (
 export const getAllDestinations = async (query: IDestinationQuery) => {
   const { search, category, country, bestSeason, minCost, maxCost, minRating, sort = 'newest', page = 1, limit = 10 } = query;
   const filter: FilterQuery<IDestination> = { status: 'published' };
+
   if (search) {
-    filter[''] = { '': search };
+    const escaped = escapeRegex(search);
+    filter.$or = [
+      { title: { $regex: escaped, $options: 'i' } },
+      { city: { $regex: escaped, $options: 'i' } },
+      { country: { $regex: escaped, $options: 'i' } },
+      { shortDescription: { $regex: escaped, $options: 'i' } },
+    ];
   }
+
   if (category) filter.category = category;
   if (country) filter.country = country;
   if (bestSeason) filter.bestSeason = bestSeason;
+
   if (minCost !== undefined || maxCost !== undefined) {
     filter.averageDailyCost = {};
-    if (minCost !== undefined) filter.averageDailyCost[''] = minCost;
-    if (maxCost !== undefined) filter.averageDailyCost[''] = maxCost;
+    if (minCost !== undefined) filter.averageDailyCost.$gte = minCost;
+    if (maxCost !== undefined) filter.averageDailyCost.$lte = maxCost;
   }
+
   if (minRating !== undefined) {
-    filter.rating = { '': minRating };
+    filter.rating = { $gte: minRating };
   }
+
+  const skip = (page - 1) * limit;
+  const sortObj = buildSortObject(sort);
+  const [destinations, total] = await Promise.all([
+    Destination.find(filter).sort(sortObj).skip(skip).limit(limit),
+    Destination.countDocuments(filter),
+  ]);
+  return {
+    destinations,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+};
+
+export const getAllDestinationsAdmin = async (query: IDestinationQuery & { status?: string }) => {
+  const { search, category, country, bestSeason, minCost, maxCost, minRating, status, sort = 'newest', page = 1, limit = 10 } = query;
+  const filter: FilterQuery<IDestination> = {};
+
+  if (search) {
+    const escaped = escapeRegex(search);
+    filter.$or = [
+      { title: { $regex: escaped, $options: 'i' } },
+      { city: { $regex: escaped, $options: 'i' } },
+      { country: { $regex: escaped, $options: 'i' } },
+      { shortDescription: { $regex: escaped, $options: 'i' } },
+    ];
+  }
+
+  if (category) filter.category = category;
+  if (country) filter.country = country;
+  if (bestSeason) filter.bestSeason = bestSeason;
+  if (status) filter.status = status;
+
+  if (minCost !== undefined || maxCost !== undefined) {
+    filter.averageDailyCost = {};
+    if (minCost !== undefined) filter.averageDailyCost.$gte = minCost;
+    if (maxCost !== undefined) filter.averageDailyCost.$lte = maxCost;
+  }
+
+  if (minRating !== undefined) {
+    filter.rating = { $gte: minRating };
+  }
+
   const skip = (page - 1) * limit;
   const sortObj = buildSortObject(sort);
   const [destinations, total] = await Promise.all([
@@ -64,6 +118,9 @@ export const getDestinationBySlug = async (slug: string): Promise<IDestination> 
 };
 
 export const getDestinationById = async (id: string): Promise<IDestination> => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw ApiError.badRequest('Invalid destination ID');
+  }
   const destination = await Destination.findById(id);
   if (!destination) {
     throw ApiError.notFound('Destination not found');
@@ -72,6 +129,23 @@ export const getDestinationById = async (id: string): Promise<IDestination> => {
 };
 
 export const updateDestination = async (id: string, data: Partial<IDestination>): Promise<IDestination> => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw ApiError.badRequest('Invalid destination ID');
+  }
+
+  if (data.status !== undefined && !['draft', 'published'].includes(data.status)) {
+    throw ApiError.badRequest('Invalid status value');
+  }
+
+  if (data.title) {
+    let slug = slugify(data.title, { lower: true, strict: true });
+    const existingSlug = await Destination.findOne({ slug, _id: { $ne: new Types.ObjectId(id) } });
+    if (existingSlug) {
+      slug = slug + '-' + Date.now();
+    }
+    (data as Record<string, unknown>).slug = slug;
+  }
+
   const destination = await Destination.findByIdAndUpdate(id, data, { new: true, runValidators: true });
   if (!destination) {
     throw ApiError.notFound('Destination not found');
@@ -80,6 +154,9 @@ export const updateDestination = async (id: string, data: Partial<IDestination>)
 };
 
 export const deleteDestination = async (id: string): Promise<void> => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw ApiError.badRequest('Invalid destination ID');
+  }
   const destination = await Destination.findByIdAndDelete(id);
   if (!destination) {
     throw ApiError.notFound('Destination not found');

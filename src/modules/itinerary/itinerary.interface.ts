@@ -7,10 +7,13 @@ export interface IActivity {
   endTime: string;
   estimatedCost: number;
   category: string;
+  location: string;
+  notes: string;
 }
 
 export interface IDayPlan {
   dayNumber: number;
+  date: string;
   title: string;
   activities: IActivity[];
 }

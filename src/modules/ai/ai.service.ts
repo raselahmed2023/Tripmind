@@ -17,49 +17,67 @@ const sanitizeInput = (val: string): string => {
 
 const parseAIResponse = (text: string): AITripPlanResponse => {
   let cleaned = text.trim();
-  if (cleaned.startsWith('`')) {
-    cleaned = cleaned.replace(/^`(?:json)?\n?/, '').replace(/\n?`$/, '');
+
+  // Strip markdown code fences
+  const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  } else {
+    // Also handle partial fences
+    cleaned = cleaned.replace(/^`{3}(?:json)?\s*\n?/, '').replace(/\n?\s*`{3}\s*$/, '');
   }
-  return JSON.parse(cleaned) as AITripPlanResponse;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw ApiError.internal('AI returned invalid JSON. Please try again.');
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw ApiError.internal('AI returned unexpected response format. Please try again.');
+  }
+
+  return parsed as AITripPlanResponse;
 };
 
-const validateResponse = (data: AITripPlanResponse, durationDays: number, _dailyBudget: number): void => {
+const validateResponse = (data: AITripPlanResponse, durationDays: number): void => {
   if (!data.summary || typeof data.summary !== 'string') {
-    throw ApiError.badRequest('AI response missing summary');
+    throw ApiError.internal('AI response missing summary');
   }
   if (!Array.isArray(data.days) || data.days.length === 0) {
-    throw ApiError.badRequest('AI response missing days');
+    throw ApiError.internal('AI response missing days');
   }
   const dayNumbers = new Set<number>();
   const activityTitles = new Set<string>();
   for (const day of data.days) {
     if (dayNumbers.has(day.dayNumber)) {
-      throw ApiError.badRequest('Duplicate day number: ' + day.dayNumber);
+      throw ApiError.internal('Duplicate day number: ' + day.dayNumber);
     }
     dayNumbers.add(day.dayNumber);
     if (!Array.isArray(day.activities)) {
-      throw ApiError.badRequest('Day ' + day.dayNumber + ' missing activities');
+      throw ApiError.internal('Day ' + day.dayNumber + ' missing activities');
     }
     for (const act of day.activities) {
       const key = day.dayNumber + ':' + act.title.toLowerCase();
       if (activityTitles.has(key)) {
-        throw ApiError.badRequest('Duplicate activity: ' + act.title + ' on day ' + day.dayNumber);
+        throw ApiError.internal('Duplicate activity: ' + act.title + ' on day ' + day.dayNumber);
       }
       activityTitles.add(key);
       if (typeof act.estimatedCost !== 'number' || act.estimatedCost < 0) {
-        throw ApiError.badRequest('Invalid cost for activity: ' + act.title);
+        throw ApiError.internal('Invalid cost for activity: ' + act.title);
       }
     }
   }
   if (data.days.length !== durationDays) {
-    throw ApiError.badRequest('Expected ' + durationDays + ' days but got ' + data.days.length);
+    throw ApiError.internal('Expected ' + durationDays + ' days but got ' + data.days.length);
   }
   if (!data.costBreakdown || typeof data.costBreakdown !== 'object') {
-    throw ApiError.badRequest('AI response missing costBreakdown');
+    throw ApiError.internal('AI response missing costBreakdown');
   }
   for (const val of Object.values(data.costBreakdown)) {
     if (typeof val !== 'number' || val < 0) {
-      throw ApiError.badRequest('Invalid cost breakdown value');
+      throw ApiError.internal('Invalid cost breakdown value');
     }
   }
 };
@@ -79,12 +97,20 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
   try {
     const user = await tools.getUser(userId);
     const trip = await tools.getTrip(tripId);
+
     if (trip.userId.toString() !== userId) {
       throw ApiError.forbidden('You can only generate plans for your own trips');
     }
-    const destination = await tools.getDestination(input.destinationId);
-    const durationDays = tools.calculateTripDays(input.startDate, input.endDate);
-    const dailyBudget = tools.calculateBudget(input.budget, durationDays, input.travelers);
+
+    const destination = await tools.getDestination(
+      (trip.destinationId as Types.ObjectId).toString()
+    );
+
+    const durationDays = tools.calculateTripDays(
+      trip.startDate.toISOString(),
+      trip.endDate.toISOString()
+    );
+    const dailyBudget = tools.calculateBudget(trip.budget, durationDays, trip.travelers);
 
     const context: AITripPlanRequest = {
       destination: {
@@ -101,20 +127,20 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
         highlights: destination.highlights,
       },
       trip: {
-        startDate: input.startDate,
-        endDate: input.endDate,
+        startDate: trip.startDate.toISOString().split('T')[0],
+        endDate: trip.endDate.toISOString().split('T')[0],
         durationDays,
-        budget: input.budget,
+        budget: trip.budget,
         dailyBudget,
-        travelers: input.travelers,
-        currency: input.currency,
-        travelStyle: input.travelStyle,
-        interests: input.interests,
-        accommodationPreference: input.accommodationPreference,
-        transportPreference: input.transportPreference,
-        dietaryRequirements: input.dietaryRequirements,
-        accessibilityRequirements: input.accessibilityRequirements,
-        additionalNotes: sanitizeInput(input.additionalNotes),
+        travelers: trip.travelers,
+        currency: trip.currency,
+        travelStyle: trip.travelStyle,
+        interests: trip.interests,
+        accommodationPreference: trip.accommodationPreference,
+        transportPreference: trip.transportPreference,
+        dietaryRequirements: sanitizeInput(input.dietaryPreferences || ''),
+        accessibilityRequirements: sanitizeInput(input.accessibilityNeeds || ''),
+        additionalNotes: sanitizeInput(input.additionalNotes || ''),
       },
     };
 
@@ -153,7 +179,7 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
         }
         console.log('[AI] Generation attempt ' + (attempt + 1) + ' completed in ' + (Date.now() - startTime) + 'ms');
         result = parseAIResponse(responseText);
-        validateResponse(result, durationDays, dailyBudget);
+        validateResponse(result, durationDays);
         break;
       } catch (err) {
         lastError = err as Error;
@@ -177,7 +203,7 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
       throw ApiError.internal('Failed to generate trip plan: ' + (lastError?.message || 'Unknown error'));
     }
 
-    if (!tools.validateBudget(result.costBreakdown, input.budget)) {
+    if (!tools.validateBudget(result.costBreakdown, trip.budget)) {
       console.warn('[AI] Budget mismatch detected, adding warning');
       result.warnings.push('Generated plan exceeds budget by more than 15%. Consider adjusting activities.');
       safeNotify({
@@ -187,7 +213,7 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
         message: 'Your trip plan for ' + destination.title + ' exceeds your budget by more than 15%',
         relatedEntityType: 'trip',
         relatedEntityId: tripId,
-        metadata: { budget: input.budget, currency: input.currency },
+        metadata: { budget: trip.budget, currency: trip.currency },
       });
     }
 
@@ -201,11 +227,14 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
       warnings: result.warnings,
       recommendations: result.recommendations,
       generatedAt: new Date(),
-      model: 'gemini-2.0-flash',
+      aiModel: 'gemini-2.0-flash',
       tokenUsage,
     });
 
-    await tools.updateTripItinerary(tripId, { itineraryId: itinerary._id, estimatedCost: Object.values(result.costBreakdown).reduce((s, v) => s + v, 0) });
+    await tools.updateTripItinerary(tripId, {
+      itineraryId: itinerary._id,
+      estimatedCost: Object.values(result.costBreakdown).reduce((s, v) => s + v, 0),
+    });
 
     safeNotify({
       userId: userId,

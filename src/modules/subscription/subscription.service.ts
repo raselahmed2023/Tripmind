@@ -59,7 +59,7 @@ export const createPortalSession = async (
 
   const session = await stripeService.createPortalSession(
     subscription.stripeCustomerId,
-    `${config.CLIENT_URL}/settings/billing`,
+    `${config.CLIENT_URL}/billing`,
   );
 
   return { url: session.url };
@@ -247,14 +247,20 @@ export const handleCreditPackPurchase = async (
 ): Promise<void> => {
   const userId = payment.userId.toString();
 
+  // Idempotency check - if this payment has already been fulfilled, skip
+  if (payment.metadata?.creditPackFulfilled) {
+    return;
+  }
+
   const subscription = await Subscription.findOne({
     userId: new Types.ObjectId(userId),
   });
 
   if (subscription) {
-    await Subscription.findByIdAndUpdate(subscription._id, {
-      $inc: { aiCredits: CREDIT_PACK_AMOUNT },
-    });
+    await Subscription.findOneAndUpdate(
+      { _id: subscription._id },
+      { $inc: { aiCredits: CREDIT_PACK_AMOUNT } },
+    );
   } else {
     await Subscription.create({
       userId: new Types.ObjectId(userId),
@@ -264,6 +270,11 @@ export const handleCreditPackPurchase = async (
       aiCredits: FREE_CREDIT_LIMIT + CREDIT_PACK_AMOUNT,
     });
   }
+
+  // Mark as fulfilled for idempotency
+  await Payment.findByIdAndUpdate(payment._id, {
+    $set: { 'metadata.creditPackFulfilled': true },
+  });
 
   safeNotify({
     userId,
@@ -276,6 +287,9 @@ export const handleCreditPackPurchase = async (
 };
 
 export const reserveCredit = async (userId: string): Promise<boolean> => {
+  // Ensure subscription exists
+  await getOrCreateFreeSubscription(userId);
+
   const result = await Subscription.findOneAndUpdate(
     {
       userId: new Types.ObjectId(userId),
@@ -292,5 +306,6 @@ export const rollbackCredit = async (userId: string): Promise<void> => {
   await Subscription.findOneAndUpdate(
     { userId: new Types.ObjectId(userId) },
     { $inc: { aiCredits: 1 } },
+    { new: true },
   );
 };

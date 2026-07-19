@@ -47,6 +47,9 @@ export const createCheckoutSession = async (params: {
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
     metadata: params.metadata,
+    subscription_data: {
+      metadata: params.metadata,
+    },
   });
 };
 

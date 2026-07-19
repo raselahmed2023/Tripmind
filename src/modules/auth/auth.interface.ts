@@ -1,4 +1,4 @@
-﻿import { Document } from 'mongoose';
+import { Document } from 'mongoose';
 
 export interface IUser extends Document {
   name: string;
@@ -6,6 +6,8 @@ export interface IUser extends Document {
   password: string;
   avatar: string;
   role: 'user' | 'admin';
+  authProvider: 'local' | 'google';
+  googleSubjectId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

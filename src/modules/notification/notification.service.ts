@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { Notification } from './notification.model';
 import { INotification, INotificationQuery, NotificationType, RelatedEntityType } from './notification.interface';
+import { ApiError } from '../../utils/ApiError';
 
 const buildSortObject = (sort: string): Record<string, 1 | -1> => {
   switch (sort) {
@@ -49,9 +50,12 @@ export const getUnreadCount = async (userId: string): Promise<number> => {
 };
 
 export const markAsRead = async (id: string, userId: string): Promise<INotification> => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw ApiError.badRequest('Invalid notification ID');
+  }
   const notification = await Notification.findById(id);
-  if (!notification) throw new Error('Notification not found');
-  if (notification.userId.toString() !== userId) throw new Error('Access denied');
+  if (!notification) throw ApiError.notFound('Notification not found');
+  if (notification.userId.toString() !== userId) throw ApiError.forbidden('Access denied');
   notification.isRead = true;
   await notification.save();
   return notification;
@@ -66,9 +70,12 @@ export const markAllAsRead = async (userId: string): Promise<{ modifiedCount: nu
 };
 
 export const deleteNotification = async (id: string, userId: string): Promise<void> => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw ApiError.badRequest('Invalid notification ID');
+  }
   const notification = await Notification.findById(id);
-  if (!notification) throw new Error('Notification not found');
-  if (notification.userId.toString() !== userId) throw new Error('Access denied');
+  if (!notification) throw ApiError.notFound('Notification not found');
+  if (notification.userId.toString() !== userId) throw ApiError.forbidden('Access denied');
   await Notification.findByIdAndDelete(id);
 };
 

@@ -15,7 +15,10 @@ export const getUser = async (userId: string): Promise<IUser> => {
 };
 
 export const getTrip = async (tripId: string): Promise<ITrip> => {
-  const trip = await Trip.findById(tripId);
+  if (!Types.ObjectId.isValid(tripId)) {
+    throw ApiError.badRequest('Invalid trip ID');
+  }
+  const trip = await Trip.findById(tripId).populate('destinationId');
   if (!trip) throw ApiError.notFound('Trip not found');
   return trip;
 };

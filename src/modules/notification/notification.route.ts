@@ -7,14 +7,13 @@ import {
   deleteNotification,
   clearReadNotifications,
 } from './notification.controller';
-import { validateObjectId } from '../trip/trip.validation';
 import { verifyToken } from '../../middleware/auth';
+import { validateObjectId } from '../destination/destination.validation';
 import { asyncHandler } from '../../utils/asyncHandler';
 
 const router = Router();
 
 router.get('/unread-count', verifyToken, asyncHandler(getUnreadCount));
-router.get('/clear-read', verifyToken, asyncHandler(clearReadNotifications));
 router.get('/', verifyToken, asyncHandler(getMyNotifications));
 router.patch('/read-all', verifyToken, asyncHandler(markAllAsRead));
 router.patch('/:id/read', verifyToken, validateObjectId('id'), asyncHandler(markAsRead));

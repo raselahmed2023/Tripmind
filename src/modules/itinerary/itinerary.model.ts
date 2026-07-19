@@ -8,10 +8,13 @@ const activitySchema = new Schema({
   endTime: { type: String, required: true },
   estimatedCost: { type: Number, default: 0 },
   category: { type: String, required: true },
+  location: { type: String, default: '' },
+  notes: { type: String, default: '' },
 }, { _id: false });
 
 const dayPlanSchema = new Schema({
   dayNumber: { type: Number, required: true },
+  date: { type: String, default: '' },
   title: { type: String, required: true },
   activities: { type: [activitySchema], default: [] },
 }, { _id: false });

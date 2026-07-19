@@ -34,6 +34,7 @@ export interface AITripPlanResponse {
   summary: string;
   days: {
     dayNumber: number;
+    date: string;
     title: string;
     activities: {
       title: string;
@@ -42,6 +43,8 @@ export interface AITripPlanResponse {
       endTime: string;
       estimatedCost: number;
       category: string;
+      location: string;
+      notes: string;
     }[];
   }[];
   costBreakdown: Record<string, number>;

@@ -144,6 +144,15 @@ export const handleCheckoutSessionCompleted = async (
     typeof session.subscription === 'string' ? session.subscription : null;
   payment.status = 'paid';
   payment.paidAt = new Date();
+
+  // Use actual amounts from Stripe
+  if (session.amount_total !== null) {
+    payment.amount = session.amount_total;
+  }
+  if (session.currency) {
+    payment.currency = session.currency;
+  }
+
   await payment.save();
 
   safeNotify({

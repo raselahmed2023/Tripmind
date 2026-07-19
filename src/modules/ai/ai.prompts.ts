@@ -13,7 +13,9 @@ OUTPUT RULES:
 - All costs must be numbers, never negative.
 - Times must be in HH:MM format (24-hour).
 - Each day must have a unique dayNumber starting from 1.
+- Each day must have a date in YYYY-MM-DD format.
 - Activities must have unique titles within the same day.
+- Include location and notes for each activity.
 - Total daily costs must not exceed the daily budget significantly.
 - Consider the travelers count for cost estimates.
 - Include realistic travel times between activities.
@@ -47,9 +49,27 @@ TRIP DETAILS:
 
 Return ONLY valid JSON:
 {
-  'summary': 'string',
-  'days': [{'dayNumber': 1, 'title': 'string', 'activities': [{'title': 'string', 'description': 'string', 'startTime': 'HH:MM', 'endTime': 'HH:MM', 'estimatedCost': 0, 'category': 'string'}]}],
-  'costBreakdown': {'accommodation': 0, 'food': 0, 'activities': 0, 'transport': 0, 'other': 0},
-  'warnings': ['string'],
-  'recommendations': ['string']
+  "summary": "string",
+  "days": [
+    {
+      "dayNumber": 1,
+      "date": "YYYY-MM-DD",
+      "title": "string",
+      "activities": [
+        {
+          "title": "string",
+          "description": "string",
+          "startTime": "HH:MM",
+          "endTime": "HH:MM",
+          "estimatedCost": 0,
+          "category": "string",
+          "location": "string",
+          "notes": "string"
+        }
+      ]
+    }
+  ],
+  "costBreakdown": {"accommodation": 0, "food": 0, "activities": 0, "transport": 0, "other": 0},
+  "warnings": ["string"],
+  "recommendations": ["string"]
 }`;

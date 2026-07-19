@@ -1,4 +1,4 @@
-﻿import mongoose, { Schema } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 import bcrypt from 'bcrypt';
 import { IUser } from '../auth/auth.interface';
 
@@ -19,7 +19,9 @@ const userSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: [true, 'Password is required'],
+      required: function (this: IUser) {
+        return this.authProvider !== 'google';
+      },
       select: false,
     },
     avatar: {
@@ -31,17 +33,29 @@ const userSchema = new Schema<IUser>(
       enum: ['user', 'admin'],
       default: 'user',
     },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
+    googleSubjectId: {
+      type: String,
+      default: null,
+      sparse: true,
+    },
   },
   { timestamps: true },
 );
 
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
+  if (!this.password) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 
 userSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
+  if (!this.password) return false;
   return bcrypt.compare(candidatePassword, this.password);
 };
 

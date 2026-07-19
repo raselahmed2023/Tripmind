@@ -18,6 +18,10 @@ const envSchema = z.object({
   STRIPE_AI_CREDITS_10_PRICE_ID: z.string().default(''),
   CLIENT_URL: z.string().default('http://localhost:3000'),
   SERVER_URL: z.string().default('http://localhost:5000'),
+  ALLOWED_ORIGINS: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
+  GOOGLE_CALLBACK_URL: z.string().default('http://localhost:5000/api/v1/auth/google/callback'),
 });
 
 const parsed = envSchema.safeParse(process.env);
