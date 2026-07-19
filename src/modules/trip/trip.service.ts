@@ -105,8 +105,10 @@ export const updateTrip = async (
   if (data.startDate || data.endDate) {
     const newStart = data.startDate ? new Date(data.startDate as string) : trip.startDate;
     const newEnd = data.endDate ? new Date(data.endDate as string) : trip.endDate;
-    if (newEnd <= newStart) {
-      throw ApiError.badRequest('End date must be after start date');
+    if (newEnd < newStart) {
+      throw ApiError.badRequest(
+        'End date must be on or after start date',
+      );
     }
   }
 

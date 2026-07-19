@@ -20,8 +20,11 @@ export const createTripSchema = z.object({
   status: tripStatusEnum.optional().default('draft'),
   notes: z.string().optional().default(''),
 }).refine(
-  (data) => new Date(data.endDate) > new Date(data.startDate),
-  { message: 'End date must be after start date', path: ['endDate'] },
+  (data) => new Date(data.endDate) >= new Date(data.startDate),
+{
+  message: 'End date must be on or after start date',
+  path: ['endDate'],
+},
 );
 
 export const updateTripSchema = z.object({
@@ -41,7 +44,7 @@ export const updateTripSchema = z.object({
 }).refine(
   (data) => {
     if (data.startDate && data.endDate) {
-      return new Date(data.endDate) > new Date(data.startDate);
+      return new Date(data.endDate) >= new Date(data.startDate);
     }
     return true;
   },
