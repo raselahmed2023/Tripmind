@@ -216,6 +216,81 @@ export const getTripPaymentStatus = async (
     throw ApiError.forbidden('Access denied');
   }
 
+  // If already paid, return immediately
+  if (trip.isPlanPurchased && trip.paymentStatus === 'paid') {
+    return {
+      tripId: trip._id,
+      isPlanPurchased: trip.isPlanPurchased,
+      paymentStatus: trip.paymentStatus,
+      purchasedAt: trip.purchasedAt,
+    };
+  }
+
+  // Payment recovery: check if a pending payment was completed without webhook
+  const pendingPayment = await Payment.findOne({
+    userId: new Types.ObjectId(userId),
+    tripId: new Types.ObjectId(tripId),
+    status: 'pending',
+  }).sort({ createdAt: -1 });
+
+  if (pendingPayment) {
+    try {
+      const session = await stripeService.retrieveCheckoutSession(pendingPayment.stripeCheckoutSessionId);
+
+      if (session.payment_status === 'paid' && session.metadata?.productType === 'trip_plan') {
+        // Reuse the same idempotent verification logic
+        const wasAlreadyPaid = trip.isPlanPurchased && trip.paymentStatus === 'paid';
+
+        // Update payment record
+        pendingPayment.status = 'paid';
+        pendingPayment.paidAt = new Date();
+        pendingPayment.stripePaymentIntentId = typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : pendingPayment.stripePaymentIntentId;
+        if (session.amount_total !== null) pendingPayment.amount = session.amount_total;
+        if (session.currency) pendingPayment.currency = session.currency;
+        await pendingPayment.save();
+
+        // Update trip
+        const purchasedAt = trip.purchasedAt || new Date();
+        await Trip.findByIdAndUpdate(tripId, {
+          paymentStatus: 'paid',
+          isPlanPurchased: true,
+          purchasedAt,
+        });
+
+        // Notify only once
+        if (!wasAlreadyPaid) {
+          safeNotify({
+            userId,
+            type: 'payment_completed',
+            title: 'Trip Plan Purchased',
+            message: 'Your AI trip plan has been purchased. You can now generate your itinerary.',
+            relatedEntityType: 'trip',
+            relatedEntityId: tripId,
+            metadata: { tripId, amount: pendingPayment.amount, currency: pendingPayment.currency },
+          });
+        }
+
+        const updatedTrip = await Trip.findById(tripId);
+        return {
+          tripId: updatedTrip!._id,
+          isPlanPurchased: updatedTrip!.isPlanPurchased,
+          paymentStatus: updatedTrip!.paymentStatus,
+          purchasedAt: updatedTrip!.purchasedAt,
+        };
+      }
+
+      // Session expired — allow next checkout to replace it
+      if (session.status === 'expired') {
+        pendingPayment.status = 'cancelled';
+        await pendingPayment.save();
+      }
+    } catch {
+      // Stripe retrieval failed — return current status without crashing
+    }
+  }
+
   return {
     tripId: trip._id,
     isPlanPurchased: trip.isPlanPurchased,

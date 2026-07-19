@@ -144,6 +144,69 @@ const detectToolCalls = (text: string): Array<{ toolName: string; args: Record<s
   return toolCalls;
 };
 
+/**
+ * Build a structured conversation history from recent messages.
+ * Returns messages in chronological order, excluding the current user message
+ * that was just saved, and respecting a prompt-size limit.
+ */
+const buildConversationHistory = async (
+  conversationId: string,
+  currentMessageContent: string,
+): Promise<string> => {
+  // Fetch recent messages in descending order, then reverse to chronological
+  const recentMessages = await Message.find({
+    conversationId: new Types.ObjectId(conversationId),
+  })
+    .sort({ createdAt: -1 })
+    .limit(MAX_HISTORY_MESSAGES);
+
+  // Reverse to chronological order
+  const chronological = recentMessages.reverse();
+
+  // Filter out the current user message (the one we just saved) and build history
+  const historyParts: string[] = [];
+  let historyCharCount = 0;
+  const MAX_HISTORY_CHARS = 6000; // Leave room for trip context + current prompt
+
+  for (const msg of chronological) {
+    // Skip the current user message (most recent user message matching current content)
+    if (msg.role === 'user' && msg.content === currentMessageContent) {
+      continue;
+    }
+
+    let prefix: string;
+    switch (msg.role) {
+      case 'user':
+        prefix = 'User';
+        break;
+      case 'assistant':
+        prefix = 'Assistant';
+        break;
+      case 'tool':
+        prefix = 'Tool';
+        break;
+      default:
+        continue;
+    }
+
+    const entry = `[${prefix}]: ${msg.content}`;
+
+    // Respect size limit
+    if (historyCharCount + entry.length > MAX_HISTORY_CHARS) {
+      break;
+    }
+
+    historyParts.push(entry);
+    historyCharCount += entry.length;
+  }
+
+  if (historyParts.length === 0) {
+    return '';
+  }
+
+  return '\n\nCONVERSATION HISTORY:\n' + historyParts.join('\n\n');
+};
+
 export const sendMessage = async (
   conversationId: string,
   userId: string,
@@ -172,12 +235,8 @@ export const sendMessage = async (
     content: sanitizedContent,
   });
 
-  // Load recent history
-  const historyMessages = await Message.find({
-    conversationId: new Types.ObjectId(conversationId),
-  })
-    .sort({ createdAt: -1 })
-    .limit(MAX_HISTORY_MESSAGES);
+  // Build conversation history (excludes the current user message)
+  const historyBlock = await buildConversationHistory(conversationId, sanitizedContent);
 
   // Build context
   let contextBlock = '';
@@ -207,8 +266,12 @@ export const sendMessage = async (
     }
   }
 
-  // Build the prompt
-  let prompt = sanitizedContent;
+  // Build the prompt: history + current message + context + tool results
+  let prompt = '';
+  if (historyBlock) {
+    prompt += historyBlock;
+  }
+  prompt += '\n\n[User]: ' + sanitizedContent;
   if (contextBlock) {
     prompt += contextBlock;
   }
@@ -219,7 +282,7 @@ export const sendMessage = async (
     })), null, 2);
   }
 
-  // Save tool results as tool messages
+  // Save tool results as tool messages (only once)
   for (const toolResult of toolResults) {
     await Message.create({
       conversationId: new Types.ObjectId(conversationId),
@@ -251,7 +314,8 @@ export const sendMessage = async (
   });
 
   // Update conversation title if first message
-  if (historyMessages.length <= 1 && conversation.title === 'New Conversation') {
+  const messageCount = await Message.countDocuments({ conversationId: new Types.ObjectId(conversationId) });
+  if (messageCount <= 2 && conversation.title === 'New Conversation') {
     const titlePreview = sanitizedContent.slice(0, 80);
     await Conversation.findByIdAndUpdate(conversationId, { title: titlePreview });
   }

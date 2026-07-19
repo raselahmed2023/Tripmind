@@ -23,6 +23,6 @@ process.env.GOOGLE_CLIENT_ID = '';
 process.env.GOOGLE_CLIENT_SECRET = '';
 process.env.GOOGLE_CALLBACK_URL = 'http://localhost:5000/api/v1/auth/google/callback';
 
-// MongoMemoryServer configuration
+// MongoMemoryServer configuration — no platform-specific hardcoding.
+// TEST_MONGODB_URI can be set to use an external MongoDB instance instead.
 process.env.MONGOMS_MD5_CHECK = '0';
-process.env.MONGOMS_DISTRO = 'win64';
