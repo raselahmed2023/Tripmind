@@ -9,10 +9,7 @@ export type NotificationType =
   | 'budget_warning'
   | 'itinerary_finalized'
   | 'payment_completed'
-  | 'payment_failed'
-  | 'subscription_activated'
-  | 'subscription_cancelled'
-  | 'ai_credits_added';
+  | 'payment_verification_failed';
 
 export type RelatedEntityType = 'trip' | 'itinerary' | 'destination' | 'system';
 

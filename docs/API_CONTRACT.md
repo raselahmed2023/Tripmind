@@ -335,34 +335,23 @@ Derives from tripId: destination, startDate, endDate, travelers, budget, currenc
 
 ## Payments
 
-### POST /payments/create-checkout-session
+### POST /payments/trip-plan/checkout
 **Auth:** Bearer token
-**Body:** `{ "productType": "subscription|credit_pack" }`
+**Body:** `{ "tripId": "mongodb-trip-id" }`
 **Response 200:** `{ "sessionId": "...", "url": "..." }`
 
-### POST /payments/webhook
-**Raw body** with Stripe signature
-**Events handled:** checkout.session.completed, checkout.session.expired, payment_intent.payment_failed
+### POST /payments/trip-plan/verify
+**Auth:** Bearer token
+**Body:** `{ "sessionId": "cs_test_..." }`
+**Response 200:** `{ "payment": {...}, "trip": {...} }`
+
+### GET /payments/trip-plan/status/:tripId
+**Auth:** Bearer token
+**Response 200:** `{ "tripId", "isPlanPurchased", "paymentStatus", "purchasedAt" }`
 
 ### GET /payments/me
 **Auth:** Bearer token
 **Response 200:** Paginated payments
-
-### GET /payments/:id
-**Auth:** Bearer token
-**Response 200:** Payment object
-
----
-
-## Subscriptions
-
-### POST /subscriptions/create-portal-session
-**Auth:** Bearer token
-**Response 200:** `{ "url": "..." }`
-
-### GET /subscriptions/me
-**Auth:** Bearer token
-**Response 200:** Subscription object
 
 ---
 
@@ -437,14 +426,17 @@ Derives from tripId: destination, startDate, endDate, travelers, budget, currenc
 | JWT_REFRESH_SECRET | Yes | - | Refresh token secret |
 | JWT_EXPIRES_IN | No | 15m | Access token expiry |
 | JWT_REFRESH_EXPIRES_IN | No | 7d | Refresh token expiry |
-| GEMINI_API_KEY | Yes | - | Google Gemini API key |
-| STRIPE_SECRET_KEY | No | - | Stripe secret key |
-| STRIPE_WEBHOOK_SECRET | No | - | Stripe webhook secret |
-| STRIPE_PRO_MONTHLY_PRICE_ID | No | - | Stripe price ID |
-| STRIPE_AI_CREDITS_10_PRICE_ID | No | - | Stripe price ID |
 | CLIENT_URL | No | http://localhost:3000 | Frontend URL |
 | SERVER_URL | No | http://localhost:5000 | Backend URL |
 | ALLOWED_ORIGINS | No | CLIENT_URL | Comma-separated CORS origins |
+| GEMINI_API_KEY | Yes | - | Google Gemini API key |
+| GEMINI_MODEL | No | gemini-2.0-flash | Gemini model |
+| GROQ_API_KEY | No | - | Groq API key |
+| GROQ_MODEL | No | llama-3.3-70b-versatile | Groq model |
+| AI_PROVIDER_ORDER | No | gemini,groq | AI provider fallback order |
+| STRIPE_SECRET_KEY | Yes | - | Stripe secret key |
+| TRIP_PLAN_PRICE_CENTS | Yes | - | Trip plan price in cents |
+| TRIP_PLAN_CURRENCY | No | usd | Trip plan currency |
 | GOOGLE_CLIENT_ID | No | - | Google OAuth client ID |
 | GOOGLE_CLIENT_SECRET | No | - | Google OAuth client secret |
 | GOOGLE_CALLBACK_URL | No | http://localhost:5000/api/v1/auth/google/callback | Google OAuth callback URL |

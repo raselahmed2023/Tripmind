@@ -83,9 +83,9 @@ describe('Notification Service', () => {
     });
     await notificationService.createNotification({
       userId: user._id.toString(),
-      type: 'subscription_activated',
+      type: 'payment_completed',
       title: 'Sub',
-      message: 'Subscription active',
+      message: 'Payment confirmed',
       relatedEntityType: 'system',
     });
 

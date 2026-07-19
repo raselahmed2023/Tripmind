@@ -1,95 +1,203 @@
 import { Types } from 'mongoose';
-import Stripe from 'stripe';
 import { Payment } from './payment.model';
-import { IPayment, ICreateCheckoutSessionInput, IPaymentQuery } from './payment.interface';
+import { IPayment, IPaymentQuery } from './payment.interface';
+import { Trip } from '../trip/trip.model';
 import { config } from '../../config';
 import { ApiError } from '../../utils/ApiError';
 import * as stripeService from './stripe.service';
 import { safeNotify } from '../notification/notification.service';
 
-const PRICE_MAP: Record<string, { priceId: string; amount: number }> = {
-  subscription: {
-    priceId: config.STRIPE_PRO_MONTHLY_PRICE_ID,
-    amount: 1999,
-  },
-  credit_pack: {
-    priceId: config.STRIPE_AI_CREDITS_10_PRICE_ID,
-    amount: 999,
-  },
-};
-
-const PLAN_MAP: Record<string, 'pro_monthly' | 'ai_credits_10'> = {
-  subscription: 'pro_monthly',
-  credit_pack: 'ai_credits_10',
-};
-
-const findOrCreateStripeCustomer = async (
+export const createTripPlanCheckout = async (
   userId: string,
   email: string,
-  name: string,
-): Promise<string> => {
-  const existing = await Payment.findOne({
-    userId: new Types.ObjectId(userId),
-    stripeCustomerId: { $ne: null },
-  }).sort({ createdAt: -1 });
-
-  if (existing && existing.stripeCustomerId) {
-    return existing.stripeCustomerId;
-  }
-
-  const customer = await stripeService.createCustomer(email, name);
-  return customer.id;
-};
-
-export const createCheckoutSession = async (
-  userId: string,
-  email: string,
-  name: string,
-  input: ICreateCheckoutSessionInput,
+  tripId: string,
 ): Promise<{ sessionId: string; url: string }> => {
-  const priceConfig = PRICE_MAP[input.productType];
-  if (!priceConfig || !priceConfig.priceId) {
-    throw ApiError.badRequest(
-      'Payment is not configured for this product. Contact support.',
-    );
+  if (!Types.ObjectId.isValid(tripId)) {
+    throw ApiError.badRequest('Invalid trip ID');
   }
 
-  const customerId = await findOrCreateStripeCustomer(userId, email, name);
-  const metadata = { userId, productType: input.productType };
-
-  let session: Stripe.Checkout.Session;
-
-  if (input.productType === 'subscription') {
-    session = await stripeService.createCheckoutSession({
-      customerId,
-      priceId: priceConfig.priceId,
-      successUrl: `${config.CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${config.CLIENT_URL}/payment/cancel`,
-      metadata,
-    });
-  } else {
-    session = await stripeService.createOneTimeCheckoutSession({
-      customerId,
-      priceId: priceConfig.priceId,
-      successUrl: `${config.CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${config.CLIENT_URL}/payment/cancel`,
-      metadata,
-    });
+  const trip = await Trip.findById(tripId);
+  if (!trip) {
+    throw ApiError.notFound('Trip not found');
   }
 
+  if (trip.userId.toString() !== userId) {
+    throw ApiError.forbidden('You can only purchase plans for your own trips');
+  }
+
+  if (trip.isPlanPurchased && trip.paymentStatus === 'paid') {
+    throw ApiError.badRequest('This trip plan has already been purchased');
+  }
+
+  // Check for existing pending session (prevent duplicates)
+  const existingPending = await Payment.findOne({
+    userId: new Types.ObjectId(userId),
+    tripId: new Types.ObjectId(tripId),
+    status: 'pending',
+  });
+
+  if (existingPending) {
+    // Retrieve the session to check if it's still valid
+    try {
+      const session = await stripeService.retrieveCheckoutSession(existingPending.stripeCheckoutSessionId);
+      if (session.status === 'open') {
+        return { sessionId: session.id, url: session.url! };
+      }
+    } catch {
+      // Session expired or invalid, create a new one
+    }
+  }
+
+  // Mark trip as pending payment
+  await Trip.findByIdAndUpdate(tripId, { paymentStatus: 'pending' });
+
+  const session = await stripeService.createTripPlanCheckoutSession({
+    userId,
+    tripId,
+    customerEmail: email,
+    successUrl: `${config.CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `${config.CLIENT_URL}/payment/cancel?tripId=${tripId}`,
+  });
+
+  // Create payment record
   await Payment.create({
     userId: new Types.ObjectId(userId),
+    tripId: new Types.ObjectId(tripId),
     stripeCheckoutSessionId: session.id,
-    stripeCustomerId: customerId,
-    productType: input.productType,
-    plan: PLAN_MAP[input.productType],
-    amount: priceConfig.amount,
-    currency: 'usd',
+    productType: 'trip_plan',
+    amount: config.TRIP_PLAN_PRICE_CENTS,
+    currency: config.TRIP_PLAN_CURRENCY,
     status: 'pending',
-    metadata,
   });
 
   return { sessionId: session.id, url: session.url! };
+};
+
+export const verifyTripPlanPayment = async (
+  sessionId: string,
+  userId: string,
+): Promise<{ payment: IPayment; trip: InstanceType<typeof Trip> }> => {
+  // Retrieve session from Stripe
+  const session = await stripeService.retrieveCheckoutSession(sessionId);
+
+  // Validate session
+  if (!session) {
+    throw ApiError.notFound('Checkout session not found');
+  }
+
+  if (session.payment_status !== 'paid') {
+    throw ApiError.badRequest('Payment has not been completed');
+  }
+
+  if (session.metadata?.productType !== 'trip_plan') {
+    throw ApiError.badRequest('Invalid product type');
+  }
+
+  if (session.metadata?.userId !== userId) {
+    throw ApiError.forbidden('This payment does not belong to you');
+  }
+
+  const tripId = session.metadata?.tripId;
+  if (!tripId || !Types.ObjectId.isValid(tripId)) {
+    throw ApiError.badRequest('Invalid trip reference in payment');
+  }
+
+  // Verify amount and currency
+  if (session.amount_total !== config.TRIP_PLAN_PRICE_CENTS) {
+    throw ApiError.badRequest('Payment amount mismatch');
+  }
+
+  if (session.currency !== config.TRIP_PLAN_CURRENCY) {
+    throw ApiError.badRequest('Payment currency mismatch');
+  }
+
+  // Verify trip ownership
+  const trip = await Trip.findById(tripId);
+  if (!trip) {
+    throw ApiError.notFound('Trip not found');
+  }
+
+  if (trip.userId.toString() !== userId) {
+    throw ApiError.forbidden('You can only verify payments for your own trips');
+  }
+
+  // Find or update payment record (idempotent)
+  let payment = await Payment.findOne({ stripeCheckoutSessionId: sessionId });
+
+  if (payment && payment.status === 'paid') {
+    // Already processed - return existing
+    return { payment, trip };
+  }
+
+  if (!payment) {
+    payment = await Payment.create({
+      userId: new Types.ObjectId(userId),
+      tripId: new Types.ObjectId(tripId),
+      stripeCheckoutSessionId: sessionId,
+      stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
+      productType: 'trip_plan',
+      amount: session.amount_total || config.TRIP_PLAN_PRICE_CENTS,
+      currency: session.currency || config.TRIP_PLAN_CURRENCY,
+      status: 'paid',
+      paidAt: new Date(),
+    });
+  } else {
+    // Update existing pending payment
+    payment.status = 'paid';
+    payment.paidAt = new Date();
+    payment.stripePaymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : payment.stripePaymentIntentId;
+    if (session.amount_total !== null) payment.amount = session.amount_total;
+    if (session.currency) payment.currency = session.currency;
+    await payment.save();
+  }
+
+  // Update trip (idempotent)
+  if (!trip.isPlanPurchased) {
+    await Trip.findByIdAndUpdate(tripId, {
+      paymentStatus: 'paid',
+      isPlanPurchased: true,
+      purchasedAt: new Date(),
+    });
+  }
+
+  // Send notification (only once - check if already paid)
+  safeNotify({
+    userId,
+    type: 'payment_completed',
+    title: 'Trip Plan Purchased',
+    message: 'Your AI trip plan has been purchased. You can now generate your itinerary.',
+    relatedEntityType: 'trip',
+    relatedEntityId: tripId,
+    metadata: { tripId, amount: payment.amount, currency: payment.currency },
+  });
+
+  return { payment, trip: trip as InstanceType<typeof Trip> };
+};
+
+export const getTripPaymentStatus = async (
+  tripId: string,
+  userId: string,
+  isAdmin: boolean,
+) => {
+  if (!Types.ObjectId.isValid(tripId)) {
+    throw ApiError.badRequest('Invalid trip ID');
+  }
+
+  const trip = await Trip.findById(tripId);
+  if (!trip) {
+    throw ApiError.notFound('Trip not found');
+  }
+
+  if (!isAdmin && trip.userId.toString() !== userId) {
+    throw ApiError.forbidden('Access denied');
+  }
+
+  return {
+    tripId: trip._id,
+    isPlanPurchased: trip.isPlanPurchased,
+    paymentStatus: trip.paymentStatus,
+    purchasedAt: trip.purchasedAt,
+  };
 };
 
 export const getPaymentsByUser = async (
@@ -109,90 +217,4 @@ export const getPaymentsByUser = async (
     payments,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
-};
-
-export const getPaymentById = async (
-  paymentId: string,
-  userId: string,
-): Promise<IPayment> => {
-  if (!Types.ObjectId.isValid(paymentId)) {
-    throw ApiError.badRequest('Invalid payment ID');
-  }
-  const payment = await Payment.findById(paymentId);
-  if (!payment) {
-    throw ApiError.notFound('Payment not found');
-  }
-  if (payment.userId.toString() !== userId) {
-    throw ApiError.forbidden('You can only access your own payments');
-  }
-  return payment;
-};
-
-export const handleCheckoutSessionCompleted = async (
-  session: Stripe.Checkout.Session,
-): Promise<void> => {
-  const userId = session.metadata?.userId;
-  const productType = session.metadata?.productType;
-  if (!userId || !productType) return;
-
-  const payment = await Payment.findOne({ stripeCheckoutSessionId: session.id });
-  if (!payment || payment.status === 'paid') return;
-
-  payment.stripePaymentIntentId =
-    typeof session.payment_intent === 'string' ? session.payment_intent : null;
-  payment.stripeSubscriptionId =
-    typeof session.subscription === 'string' ? session.subscription : null;
-  payment.status = 'paid';
-  payment.paidAt = new Date();
-
-  // Use actual amounts from Stripe
-  if (session.amount_total !== null) {
-    payment.amount = session.amount_total;
-  }
-  if (session.currency) {
-    payment.currency = session.currency;
-  }
-
-  await payment.save();
-
-  safeNotify({
-    userId,
-    type: 'payment_completed',
-    title: 'Payment Completed',
-    message:
-      productType === 'subscription'
-        ? 'Your Pro Monthly subscription has been activated!'
-        : 'Your AI Credit Pack has been purchased!',
-    relatedEntityType: 'system',
-    metadata: { productType, amount: payment.amount, currency: payment.currency },
-  });
-};
-
-export const handleCheckoutSessionExpired = async (
-  session: Stripe.Checkout.Session,
-): Promise<void> => {
-  const payment = await Payment.findOne({ stripeCheckoutSessionId: session.id });
-  if (!payment || payment.status !== 'pending') return;
-
-  payment.status = 'cancelled';
-  await payment.save();
-};
-
-export const handlePaymentIntentFailed = async (
-  paymentIntent: Stripe.PaymentIntent,
-): Promise<void> => {
-  const payment = await Payment.findOne({ stripePaymentIntentId: paymentIntent.id });
-  if (!payment || payment.status === 'failed') return;
-
-  payment.status = 'failed';
-  await payment.save();
-
-  safeNotify({
-    userId: payment.userId.toString(),
-    type: 'payment_failed',
-    title: 'Payment Failed',
-    message: 'Your payment could not be processed. Please try again or use a different payment method.',
-    relatedEntityType: 'system',
-    metadata: { productType: payment.productType },
-  });
 };

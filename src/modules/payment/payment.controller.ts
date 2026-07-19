@@ -1,24 +1,13 @@
 import { Request, Response } from 'express';
-import Stripe from 'stripe';
 import { ApiResponse } from '../../utils/ApiResponse';
-import { ApiError } from '../../utils/ApiError';
 import * as paymentService from './payment.service';
-import * as subscriptionService from '../subscription/subscription.service';
-import * as stripeService from './stripe.service';
-import { User } from '../user/user.model';
-import { Payment } from './payment.model';
 
-export const createCheckoutSession = async (req: Request, res: Response) => {
-  const { productType } = req.body;
+export const createTripPlanCheckout = async (req: Request, res: Response) => {
+  const { tripId } = req.body;
   const userId = req.user!.userId;
   const email = req.user!.email;
 
-  const user = await User.findById(userId).select('name email');
-  const name = user?.name || email;
-
-  const result = await paymentService.createCheckoutSession(userId, email, name, {
-    productType,
-  });
+  const result = await paymentService.createTripPlanCheckout(userId, email, tripId);
 
   ApiResponse.success(res, 'Checkout session created', {
     sessionId: result.sessionId,
@@ -26,90 +15,36 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
   });
 };
 
-export const webhook = async (req: Request, res: Response) => {
-  const signature = req.headers['stripe-signature'] as string;
-  if (!signature) {
-    throw ApiError.badRequest('Missing stripe-signature header');
-  }
+export const verifyTripPlanPayment = async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  const userId = req.user!.userId;
 
-  let event: Stripe.Event;
-  try {
-    event = stripeService.constructWebhookEvent(req.body as Buffer, signature);
-  } catch {
-    throw ApiError.badRequest('Invalid webhook signature');
-  }
+  const result = await paymentService.verifyTripPlanPayment(sessionId, userId);
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object as Stripe.Checkout.Session;
-      await paymentService.handleCheckoutSessionCompleted(session);
+  ApiResponse.success(res, 'Payment verified successfully', {
+    payment: {
+      _id: result.payment._id,
+      status: result.payment.status,
+      amount: result.payment.amount,
+      currency: result.payment.currency,
+      paidAt: result.payment.paidAt,
+    },
+    trip: {
+      _id: result.trip._id,
+      isPlanPurchased: result.trip.isPlanPurchased,
+      paymentStatus: result.trip.paymentStatus,
+    },
+  });
+};
 
-      const productType = session.metadata?.productType;
-      if (productType === 'subscription') {
-        const subscriptionId =
-          typeof session.subscription === 'string'
-            ? session.subscription
-            : session.subscription?.id;
-        if (subscriptionId) {
-          const stripeSub = await stripeService.retrieveSubscription(subscriptionId);
-          await subscriptionService.handleSubscriptionCreated(stripeSub);
-        }
-      } else if (productType === 'credit_pack') {
-        const payment = await Payment.findOne({ stripeCheckoutSessionId: session.id });
-        if (payment) {
-          await subscriptionService.handleCreditPackPurchase(payment);
-        }
-      }
-      break;
-    }
+export const getTripPaymentStatus = async (req: Request, res: Response) => {
+  const tripId = req.params.tripId as string;
+  const userId = req.user!.userId;
+  const isAdmin = req.user!.role === 'admin';
 
-    case 'checkout.session.expired': {
-      const session = event.data.object as Stripe.Checkout.Session;
-      await paymentService.handleCheckoutSessionExpired(session);
-      break;
-    }
+  const status = await paymentService.getTripPaymentStatus(tripId, userId, isAdmin);
 
-    case 'payment_intent.payment_failed': {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent;
-      await paymentService.handlePaymentIntentFailed(paymentIntent);
-      break;
-    }
-
-    case 'customer.subscription.created': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await subscriptionService.handleSubscriptionCreated(subscription);
-      break;
-    }
-
-    case 'customer.subscription.updated': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await subscriptionService.handleSubscriptionUpdated(subscription);
-      break;
-    }
-
-    case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await subscriptionService.handleSubscriptionDeleted(subscription);
-      break;
-    }
-
-    case 'invoice.paid': {
-      const invoice = event.data.object as Stripe.Invoice;
-      await subscriptionService.handleInvoicePaid(invoice);
-      break;
-    }
-
-    case 'invoice.payment_failed': {
-      const invoice = event.data.object as Stripe.Invoice;
-      await subscriptionService.handleInvoicePaymentFailed(invoice);
-      break;
-    }
-
-    default:
-      break;
-  }
-
-  res.status(200).json({ received: true });
+  ApiResponse.success(res, 'Payment status fetched', status);
 };
 
 export const getMyPayments = async (req: Request, res: Response) => {
@@ -126,10 +61,4 @@ export const getMyPayments = async (req: Request, res: Response) => {
     result.pagination.limit,
     result.pagination.total,
   );
-};
-
-export const getPaymentById = async (req: Request, res: Response) => {
-  const id = req.params.id as string;
-  const payment = await paymentService.getPaymentById(id, req.user!.userId);
-  ApiResponse.success(res, 'Payment fetched successfully', payment);
 };

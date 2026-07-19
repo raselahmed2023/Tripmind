@@ -1,7 +1,6 @@
 import { User } from './user.model';
 import { IUser, IRegisterInput } from '../auth/auth.interface';
 import { ApiError } from '../../utils/ApiError';
-import { getOrCreateFreeSubscription } from '../subscription/subscription.service';
 
 export const findByEmail = async (email: string): Promise<IUser | null> => {
   return User.findOne({ email }).select('+password');
@@ -12,9 +11,7 @@ export const createUser = async (data: IRegisterInput): Promise<IUser> => {
   if (existingUser) {
     throw ApiError.conflict('Email already registered');
   }
-  const user = await User.create(data);
-  await getOrCreateFreeSubscription(user._id.toString());
-  return user;
+  return User.create(data);
 };
 
 export const getUserById = async (id: string): Promise<IUser | null> => {

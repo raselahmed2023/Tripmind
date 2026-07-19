@@ -1,10 +1,10 @@
 import mongoose from 'mongoose';
 import { setupTestDB, teardownTestDB, clearDB } from './setup';
 import { User } from '../modules/user/user.model';
+import { Trip } from '../modules/trip/trip.model';
+import { Destination } from '../modules/destination/destination.model';
 import { Payment } from '../modules/payment/payment.model';
-import { Subscription } from '../modules/subscription/subscription.model';
 import * as paymentService from '../modules/payment/payment.service';
-import * as subscriptionService from '../modules/subscription/subscription.service';
 
 beforeAll(async () => await setupTestDB());
 afterEach(async () => await clearDB());
@@ -19,20 +19,150 @@ const createUser = async (email = 'test@test.com') => {
   });
 };
 
+const createDestination = async (userId: string) => {
+  return Destination.create({
+    title: 'Tokyo',
+    slug: 'tokyo',
+    country: 'Japan',
+    city: 'Tokyo',
+    shortDescription: 'Vibrant capital',
+    fullDescription: 'Tokyo is the capital.',
+    images: [],
+    category: 'city',
+    averageDailyCost: 100,
+    currency: 'USD',
+    rating: 4.5,
+    reviewCount: 100,
+    bestSeason: 'Spring',
+    recommendedDays: 5,
+    latitude: 35.6762,
+    longitude: 139.6503,
+    highlights: ['Shibuya'],
+    status: 'published',
+    createdBy: new mongoose.Types.ObjectId(userId),
+  });
+};
+
+const createTrip = async (userId: string, destinationId: string) => {
+  return Trip.create({
+    userId: new mongoose.Types.ObjectId(userId),
+    destinationId: new mongoose.Types.ObjectId(destinationId),
+    title: 'Japan Trip',
+    startDate: new Date('2025-04-01'),
+    endDate: new Date('2025-04-06'),
+    travelers: 2,
+    budget: 3000,
+    currency: 'USD',
+    travelStyle: 'mid-range',
+    interests: ['food', 'culture'],
+    status: 'planned',
+  });
+};
+
+describe('Payment Service - Checkout', () => {
+  it('should reject invalid trip ID', async () => {
+    const user = await createUser();
+    await expect(
+      paymentService.createTripPlanCheckout(user._id.toString(), user.email, 'invalid')
+    ).rejects.toThrow('Invalid trip ID');
+  });
+
+  it('should reject non-existent trip', async () => {
+    const user = await createUser();
+    const fakeId = new mongoose.Types.ObjectId().toString();
+    await expect(
+      paymentService.createTripPlanCheckout(user._id.toString(), user.email, fakeId)
+    ).rejects.toThrow('Trip not found');
+  });
+
+  it('should reject another user trip', async () => {
+    const user1 = await createUser('user1@test.com');
+    const user2 = await createUser('user2@test.com');
+    const dest = await createDestination(user1._id.toString());
+    const trip = await createTrip(user1._id.toString(), dest._id.toString());
+
+    await expect(
+      paymentService.createTripPlanCheckout(user2._id.toString(), user2.email, trip._id.toString())
+    ).rejects.toThrow('You can only purchase plans for your own trips');
+  });
+
+  it('should reject already purchased trip', async () => {
+    const user = await createUser();
+    const dest = await createDestination(user._id.toString());
+    const trip = await createTrip(user._id.toString(), dest._id.toString());
+
+    await Trip.findByIdAndUpdate(trip._id, { isPlanPurchased: true, paymentStatus: 'paid' });
+
+    await expect(
+      paymentService.createTripPlanCheckout(user._id.toString(), user.email, trip._id.toString())
+    ).rejects.toThrow('already been purchased');
+  });
+});
+
+describe('Payment Service - Trip Payment Status', () => {
+  it('should return payment status for trip owner', async () => {
+    const user = await createUser();
+    const dest = await createDestination(user._id.toString());
+    const trip = await createTrip(user._id.toString(), dest._id.toString());
+
+    const status = await paymentService.getTripPaymentStatus(
+      trip._id.toString(),
+      user._id.toString(),
+      false,
+    );
+
+    expect(status.tripId.toString()).toBe(trip._id.toString());
+    expect(status.isPlanPurchased).toBe(false);
+    expect(status.paymentStatus).toBe('unpaid');
+  });
+
+  it('should reject access for non-owner', async () => {
+    const user1 = await createUser('user1@test.com');
+    const user2 = await createUser('user2@test.com');
+    const dest = await createDestination(user1._id.toString());
+    const trip = await createTrip(user1._id.toString(), dest._id.toString());
+
+    await expect(
+      paymentService.getTripPaymentStatus(trip._id.toString(), user2._id.toString(), false)
+    ).rejects.toThrow('Access denied');
+  });
+
+  it('should allow admin access', async () => {
+    const user = await createUser();
+    const admin = await User.create({
+      name: 'Admin',
+      email: 'admin@test.com',
+      password: 'password123',
+      role: 'admin',
+    });
+    const dest = await createDestination(user._id.toString());
+    const trip = await createTrip(user._id.toString(), dest._id.toString());
+
+    const status = await paymentService.getTripPaymentStatus(
+      trip._id.toString(),
+      admin._id.toString(),
+      true,
+    );
+
+    expect(status.tripId.toString()).toBe(trip._id.toString());
+  });
+});
+
 describe('Payment Service - User Payments', () => {
   it('should get paginated payments for user', async () => {
     const user = await createUser();
+    const dest = await createDestination(user._id.toString());
+
     for (let i = 0; i < 5; i++) {
+      const trip = await createTrip(user._id.toString(), dest._id.toString());
       await Payment.create({
         userId: user._id,
+        tripId: trip._id,
         stripeCheckoutSessionId: `session_${i}`,
-        stripeCustomerId: 'cus_test',
-        productType: 'subscription',
-        plan: 'pro_monthly',
-        amount: 1999,
+        productType: 'trip_plan',
+        amount: 500,
         currency: 'usd',
         status: 'paid',
-        metadata: {},
       });
     }
 
@@ -40,134 +170,5 @@ describe('Payment Service - User Payments', () => {
     expect(result.payments).toHaveLength(3);
     expect(result.pagination.total).toBe(5);
     expect(result.pagination.totalPages).toBe(2);
-  });
-
-  it('should return 400 for invalid payment ID', async () => {
-    const user = await createUser();
-    await expect(
-      paymentService.getPaymentById('invalid', user._id.toString())
-    ).rejects.toThrow('Invalid payment ID');
-  });
-
-  it('should return 404 for non-existent payment', async () => {
-    const user = await createUser();
-    const fakeId = new mongoose.Types.ObjectId().toString();
-    await expect(
-      paymentService.getPaymentById(fakeId, user._id.toString())
-    ).rejects.toThrow('Payment not found');
-  });
-
-  it('should return 403 for wrong user', async () => {
-    const user1 = await createUser('user1@test.com');
-    const user2 = await createUser('user2@test.com');
-    const payment = await Payment.create({
-      userId: user1._id,
-      stripeCheckoutSessionId: 'session_1',
-      stripeCustomerId: 'cus_test',
-      productType: 'subscription',
-      plan: 'pro_monthly',
-      amount: 1999,
-      currency: 'usd',
-      status: 'paid',
-      metadata: {},
-    });
-
-    await expect(
-      paymentService.getPaymentById(payment._id.toString(), user2._id.toString())
-    ).rejects.toThrow('You can only access your own payments');
-  });
-});
-
-describe('Payment Service - Checkout Session Completed', () => {
-  it('should mark payment as paid and use Stripe amounts', async () => {
-    const user = await createUser();
-    const payment = await Payment.create({
-      userId: user._id,
-      stripeCheckoutSessionId: 'sess_completed_1',
-      stripeCustomerId: 'cus_test',
-      productType: 'subscription',
-      plan: 'pro_monthly',
-      amount: 1999,
-      currency: 'usd',
-      status: 'pending',
-      metadata: {},
-    });
-
-    const session = {
-      id: 'sess_completed_1',
-      metadata: { userId: user._id.toString(), productType: 'subscription' },
-      payment_intent: 'pi_test',
-      subscription: 'sub_test',
-      amount_total: 2499,
-      currency: 'eur',
-    } as any;
-
-    await paymentService.handleCheckoutSessionCompleted(session);
-
-    const updated = await Payment.findById(payment._id);
-    expect(updated!.status).toBe('paid');
-    expect(updated!.amount).toBe(2499);
-    expect(updated!.currency).toBe('eur');
-  });
-
-  it('should be idempotent for completed sessions', async () => {
-    const user = await createUser();
-    await Payment.create({
-      userId: user._id,
-      stripeCheckoutSessionId: 'sess_idempotent',
-      stripeCustomerId: 'cus_test',
-      productType: 'credit_pack',
-      plan: 'ai_credits_10',
-      amount: 999,
-      currency: 'usd',
-      status: 'paid',
-      metadata: {},
-    });
-
-    const session = {
-      id: 'sess_idempotent',
-      metadata: { userId: user._id.toString(), productType: 'credit_pack' },
-      payment_intent: 'pi_test',
-      subscription: null,
-      amount_total: 999,
-      currency: 'usd',
-    } as any;
-
-    await paymentService.handleCheckoutSessionCompleted(session);
-    // Should not throw or duplicate
-  });
-});
-
-describe('Credit Pack - Idempotent Fulfillment', () => {
-  it('should not add credits twice for same payment', async () => {
-    const user = await createUser();
-    const payment = await Payment.create({
-      userId: user._id,
-      stripeCheckoutSessionId: 'sess_credit_pack',
-      stripeCustomerId: 'cus_test',
-      productType: 'credit_pack',
-      plan: 'ai_credits_10',
-      amount: 999,
-      currency: 'usd',
-      status: 'paid',
-      metadata: {},
-    });
-
-    await Subscription.create({
-      userId: user._id,
-      plan: 'free',
-      status: 'active',
-      aiCredits: 3,
-    });
-
-    // First fulfillment
-    await subscriptionService.handleCreditPackPurchase(payment as any);
-    const sub1 = await Subscription.findOne({ userId: user._id });
-    expect(sub1!.aiCredits).toBe(13);
-
-    // Second fulfillment (idempotent - should skip)
-    await subscriptionService.handleCreditPackPurchase(payment as any);
-    const sub2 = await Subscription.findOne({ userId: user._id });
-    expect(sub2!.aiCredits).toBe(13);
   });
 });

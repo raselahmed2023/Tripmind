@@ -1,4 +1,4 @@
-﻿import { Document, Types } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export interface ITrip extends Document {
   userId: Types.ObjectId;
@@ -17,6 +17,9 @@ export interface ITrip extends Document {
   estimatedCost: number;
   notes: string;
   itineraryId: Types.ObjectId | null;
+  paymentStatus: 'unpaid' | 'pending' | 'paid' | 'failed' | 'refunded';
+  isPlanPurchased: boolean;
+  purchasedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,4 +32,4 @@ export interface ITripQuery {
   limit?: number;
 }
 
-export type ITripCreateInput = Omit<ITrip, 'userId' | 'estimatedCost' | 'itineraryId' | 'createdAt' | 'updatedAt'>;
+export type ITripCreateInput = Omit<ITrip, 'userId' | 'estimatedCost' | 'itineraryId' | 'paymentStatus' | 'isPlanPurchased' | 'purchasedAt' | 'createdAt' | 'updatedAt'>;

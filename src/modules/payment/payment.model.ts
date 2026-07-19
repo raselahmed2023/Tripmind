@@ -9,37 +9,25 @@ const paymentSchema = new Schema<IPayment>(
       required: [true, 'User ID is required'],
       index: true,
     },
+    tripId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Trip',
+      required: [true, 'Trip ID is required'],
+      index: true,
+    },
     stripeCheckoutSessionId: {
       type: String,
+      required: true,
       unique: true,
-      sparse: true,
-      default: null,
     },
     stripePaymentIntentId: {
       type: String,
-      unique: true,
-      sparse: true,
       default: null,
-    },
-    stripeCustomerId: {
-      type: String,
-      default: null,
-      index: true,
-    },
-    stripeSubscriptionId: {
-      type: String,
-      default: null,
-      index: true,
     },
     productType: {
       type: String,
       required: [true, 'Product type is required'],
-      enum: ['subscription', 'credit_pack'],
-    },
-    plan: {
-      type: String,
-      required: [true, 'Plan is required'],
-      enum: ['pro_monthly', 'ai_credits_10'],
+      enum: ['trip_plan'],
     },
     amount: {
       type: Number,
@@ -49,7 +37,6 @@ const paymentSchema = new Schema<IPayment>(
     currency: {
       type: String,
       required: [true, 'Currency is required'],
-      default: 'usd',
       lowercase: true,
       maxlength: 3,
     },
@@ -60,10 +47,6 @@ const paymentSchema = new Schema<IPayment>(
       default: 'pending',
       index: true,
     },
-    metadata: {
-      type: Schema.Types.Mixed,
-      default: {},
-    },
     paidAt: {
       type: Date,
       default: null,
@@ -72,7 +55,7 @@ const paymentSchema = new Schema<IPayment>(
   { timestamps: true },
 );
 
+paymentSchema.index({ userId: 1, tripId: 1 }, { unique: true });
 paymentSchema.index({ userId: 1, createdAt: -1 });
-paymentSchema.index({ userId: 1, productType: 1 });
 
 export const Payment = mongoose.model<IPayment>('Payment', paymentSchema);

@@ -1,7 +1,6 @@
 import { setupTestDB, teardownTestDB, clearDB } from './setup';
 import { User } from '../modules/user/user.model';
 import { ExchangeCode } from '../modules/auth/exchange-code.model';
-import { Subscription } from '../modules/subscription/subscription.model';
 import * as googleService from '../modules/auth/google.service';
 
 beforeAll(async () => await setupTestDB());
@@ -19,7 +18,7 @@ describe('Google OAuth - Exchange Code', () => {
 
     const code = await googleService.createExchangeCode(user._id.toString());
     expect(code).toBeDefined();
-    expect(code.length).toBe(64); // 32 bytes hex
+    expect(code.length).toBe(64);
 
     const stored = await ExchangeCode.findOne({ userId: user._id });
     expect(stored).not.toBeNull();
@@ -52,7 +51,6 @@ describe('Google OAuth - Exchange Code', () => {
 
     const code = await googleService.createExchangeCode(user._id.toString());
 
-    // Manually expire the code
     await ExchangeCode.updateOne(
       { userId: user._id },
       { expiresAt: new Date(Date.now() - 1000) },
@@ -93,20 +91,6 @@ describe('Google OAuth - User Creation', () => {
     expect(user.googleSubjectId).toBe('google-new-123');
     expect(user.email).toBe('newuser@test.com');
     expect(user.password).toBeUndefined();
-  });
-
-  it('should create free subscription for new Google user', async () => {
-    const user = await googleService.findOrCreateGoogleUser({
-      googleSubjectId: 'google-sub-123',
-      email: 'subuser@test.com',
-      name: 'Sub User',
-      avatar: '',
-    });
-
-    const sub = await Subscription.findOne({ userId: user._id });
-    expect(sub).not.toBeNull();
-    expect(sub!.plan).toBe('free');
-    expect(sub!.aiCredits).toBe(3);
   });
 
   it('should link Google to existing local account', async () => {

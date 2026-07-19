@@ -1,7 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { setupTestDB, teardownTestDB, clearDB } from './setup';
 import { User } from '../modules/user/user.model';
-import { Subscription } from '../modules/subscription/subscription.model';
 import * as authService from '../modules/auth/auth.service';
 import * as userService from '../modules/user/user.service';
 
@@ -45,46 +44,29 @@ describe('Auth - Token Generation', () => {
   });
 });
 
-describe('User Service - Registration Creates Subscription', () => {
-  it('should create free subscription on user creation', async () => {
+describe('User Service - Registration', () => {
+  it('should create user on registration', async () => {
     const user = await userService.createUser({
       name: 'New User',
       email: 'new@test.com',
       password: 'password123',
     });
 
-    const sub = await Subscription.findOne({ userId: user._id });
-    expect(sub).not.toBeNull();
-    expect(sub!.plan).toBe('free');
-    expect(sub!.aiCredits).toBe(3);
-  });
-
-  it('should not create duplicate subscriptions on repeated registration', async () => {
-    try {
-      await userService.createUser({
-        name: 'User 1',
-        email: 'dup@test.com',
-        password: 'password123',
-      });
-    } catch {
-      // user might already exist
-    }
-
-    const subs = await Subscription.find({});
-    expect(subs.length).toBe(1);
+    expect(user.name).toBe('New User');
+    expect(user.email).toBe('new@test.com');
   });
 
   it('should reject duplicate email', async () => {
     await userService.createUser({
       name: 'User 1',
-      email: 'dup2@test.com',
+      email: 'dup@test.com',
       password: 'password123',
     });
 
     await expect(
       userService.createUser({
         name: 'User 2',
-        email: 'dup2@test.com',
+        email: 'dup@test.com',
         password: 'password456',
       })
     ).rejects.toThrow('Email already registered');

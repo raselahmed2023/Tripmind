@@ -1,14 +1,11 @@
 import { Types } from 'mongoose';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config } from '../../config';
 import { Conversation } from './conversation.model';
 import { Message } from './message.model';
 import { Trip } from '../trip/trip.model';
 import { ApiError } from '../../utils/ApiError';
 import { TOOL_DEFINITIONS, executeTool, ToolResult } from './assistant-tools';
 import { safeNotify } from '../notification/notification.service';
-
-const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
+import { generateWithFallback, AIInput } from '../../services/ai-provider.service';
 
 const MAX_HISTORY_MESSAGES = 20;
 const MAX_PROMPT_LENGTH = 8000;
@@ -182,11 +179,6 @@ export const sendMessage = async (
     .sort({ createdAt: -1 })
     .limit(MAX_HISTORY_MESSAGES);
 
-  const history = historyMessages.reverse().map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.content }],
-  }));
-
   // Build context
   let contextBlock = '';
   if (conversation.tripId) {
@@ -237,19 +229,17 @@ export const sendMessage = async (
     });
   }
 
-  // Call Gemini
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
-    systemInstruction: SYSTEM_PROMPT,
-  });
-
+  // Call AI provider with fallback
   let responseText: string;
   try {
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(prompt);
-    responseText = result.response.text().slice(0, MAX_RESPONSE_LENGTH);
+    const aiInput: AIInput = {
+      prompt,
+      systemInstruction: SYSTEM_PROMPT,
+    };
+    const aiResult = await generateWithFallback(aiInput);
+    responseText = aiResult.text.slice(0, MAX_RESPONSE_LENGTH);
   } catch (err) {
-    console.error('[AI Assistant] Gemini error:', (err as Error).message);
+    console.error('[AI Assistant] Provider error:', (err as Error).message);
     throw ApiError.internal('AI generation failed. Please try again.');
   }
 

@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { User } from '../modules/user/user.model';
 import { Destination } from '../modules/destination/destination.model';
-import { Subscription } from '../modules/subscription/subscription.model';
 
 dotenv.config();
 
@@ -132,32 +131,16 @@ const seed = async () => {
 
     // Create demo user (upsert by email)
     const existingDemo = await User.findOne({ email: DEMO_EMAIL });
-    let demoUser;
     if (existingDemo) {
-      demoUser = existingDemo;
       console.log(`Demo user already exists: ${DEMO_EMAIL}`);
     } else {
-      demoUser = await User.create({
+      await User.create({
         name: 'Demo User',
         email: DEMO_EMAIL,
         password: DEMO_PASSWORD,
         role: 'user',
       });
       console.log(`Demo user created: ${DEMO_EMAIL}`);
-    }
-
-    // Ensure free subscriptions exist for both users
-    for (const user of [adminUser, demoUser]) {
-      const existing = await Subscription.findOne({ userId: user._id });
-      if (!existing) {
-        await Subscription.create({
-          userId: user._id,
-          plan: 'free',
-          status: 'active',
-          aiCredits: 3,
-        });
-        console.log(`Free subscription created for ${user.email}`);
-      }
     }
 
     // Seed destinations (upsert by title+country)

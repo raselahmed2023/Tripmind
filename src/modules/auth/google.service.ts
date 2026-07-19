@@ -4,7 +4,6 @@ import { OAuth2Client } from 'google-auth-library';
 import { config } from '../../config';
 import { User } from '../user/user.model';
 import { ExchangeCode } from './exchange-code.model';
-import { getOrCreateFreeSubscription } from '../subscription/subscription.service';
 import { generateTokens } from './auth.service';
 import { ApiError } from '../../utils/ApiError';
 
@@ -89,9 +88,6 @@ export const findOrCreateGoogleUser = async (googleData: {
     googleSubjectId: googleData.googleSubjectId,
     password: undefined as unknown as string,
   });
-
-  // Create free subscription idempotently
-  await getOrCreateFreeSubscription(user._id.toString());
 
   return user;
 };

@@ -81,6 +81,19 @@ const tripSchema = new Schema<ITrip>(
       ref: 'Itinerary',
       default: null,
     },
+    paymentStatus: {
+      type: String,
+      enum: ['unpaid', 'pending', 'paid', 'failed', 'refunded'],
+      default: 'unpaid',
+    },
+    isPlanPurchased: {
+      type: Boolean,
+      default: false,
+    },
+    purchasedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true },
 );

@@ -14,15 +14,11 @@ import itineraryRoutes from './modules/itinerary/itinerary.route';
 import aiRoutes from './modules/ai/ai.route';
 import notificationRoutes from './modules/notification/notification.route';
 import paymentRoutes from './modules/payment/payment.route';
-import subscriptionRoutes from './modules/subscription/subscription.route';
 import assistantRoutes from './modules/ai-assistant/assistant.route';
 import { notFound } from './middleware/notFound';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
-
-// Webhook raw body middleware — must come before the global JSON parser
-app.use('/api/v1/payments/webhook', express.raw({ type: 'application/json' }));
 
 // Trust proxy for Render/load balancers
 app.set('trust proxy', 1);
@@ -103,7 +99,6 @@ app.use('/api/v1/itineraries', itineraryRoutes);
 app.use('/api/v1/ai', aiLimiter, aiRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/payments', paymentLimiter, paymentRoutes);
-app.use('/api/v1/subscriptions', subscriptionRoutes);
 app.use('/api/v1/ai-assistant', assistantRoutes);
 
 // 404 handler (must be after all routes)
