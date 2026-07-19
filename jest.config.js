@@ -11,7 +11,7 @@ module.exports = {
     '!src/scripts/**',
   ],
   testTimeout: 60000,
-  runInBand: true,
+  setupFiles: ['<rootDir>/src/__tests__/jest-setup.ts'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { diagnostics: { ignoreCodes: [151002] } }],
   },

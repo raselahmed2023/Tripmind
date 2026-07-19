@@ -10,8 +10,8 @@ export const createTripPlanCheckout = async (req: Request, res: Response) => {
   const result = await paymentService.createTripPlanCheckout(userId, email, tripId);
 
   ApiResponse.success(res, 'Checkout session created', {
+    checkoutUrl: result.checkoutUrl,
     sessionId: result.sessionId,
-    url: result.url,
   });
 };
 
@@ -22,18 +22,10 @@ export const verifyTripPlanPayment = async (req: Request, res: Response) => {
   const result = await paymentService.verifyTripPlanPayment(sessionId, userId);
 
   ApiResponse.success(res, 'Payment verified successfully', {
-    payment: {
-      _id: result.payment._id,
-      status: result.payment.status,
-      amount: result.payment.amount,
-      currency: result.payment.currency,
-      paidAt: result.payment.paidAt,
-    },
-    trip: {
-      _id: result.trip._id,
-      isPlanPurchased: result.trip.isPlanPurchased,
-      paymentStatus: result.trip.paymentStatus,
-    },
+    tripId: result.tripId,
+    isPlanPurchased: result.isPlanPurchased,
+    paymentStatus: result.paymentStatus,
+    purchasedAt: result.purchasedAt,
   });
 };
 

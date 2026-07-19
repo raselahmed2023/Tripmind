@@ -158,9 +158,14 @@ export const generateTripPlan = async (requestBody: Record<string, unknown>, use
   };
 
   try {
-    const aiResult = await generateWithFallback(aiInput);
-    result = parseAIResponse(aiResult.text);
-    validateResponse(result, durationDays);
+    let parsedResult: AITripPlanResponse | null = null;
+
+    const aiResult = await generateWithFallback(aiInput, (text) => {
+      parsedResult = parseAIResponse(text);
+      validateResponse(parsedResult, durationDays);
+    });
+
+    result = parsedResult!;
     tokenUsage = aiResult.tokenUsage;
     providerUsed = aiResult.providerUsed;
   } catch (err) {

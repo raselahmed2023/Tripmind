@@ -124,7 +124,10 @@ const getProviders = (): ProviderConfig[] => {
   return providers;
 };
 
-export const generateWithFallback = async (input: AIInput): Promise<AIResult> => {
+export const generateWithFallback = async (
+  input: AIInput,
+  validateResponse?: (text: string) => void,
+): Promise<AIResult> => {
   const providers = getProviders();
 
   if (providers.length === 0) {
@@ -136,6 +139,18 @@ export const generateWithFallback = async (input: AIInput): Promise<AIResult> =>
   for (const provider of providers) {
     try {
       const result = await provider.generate(input);
+
+      // Validate response structure if validator provided
+      if (validateResponse) {
+        try {
+          validateResponse(result.text);
+        } catch (validationErr) {
+          lastError = validationErr as Error;
+          console.error(`[AI Provider] ${provider.name} response validation failed:`, lastError.message);
+          continue;
+        }
+      }
+
       return result;
     } catch (err) {
       lastError = err as Error;

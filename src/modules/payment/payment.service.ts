@@ -11,7 +11,7 @@ export const createTripPlanCheckout = async (
   userId: string,
   email: string,
   tripId: string,
-): Promise<{ sessionId: string; url: string }> => {
+): Promise<{ sessionId: string; checkoutUrl: string }> => {
   if (!Types.ObjectId.isValid(tripId)) {
     throw ApiError.badRequest('Invalid trip ID');
   }
@@ -29,28 +29,26 @@ export const createTripPlanCheckout = async (
     throw ApiError.badRequest('This trip plan has already been purchased');
   }
 
-  // Check for existing pending session (prevent duplicates)
-  const existingPending = await Payment.findOne({
+  // Check for existing payment record (pending or cancelled — allow retry)
+  const existingPayment = await Payment.findOne({
     userId: new Types.ObjectId(userId),
     tripId: new Types.ObjectId(tripId),
-    status: 'pending',
-  });
+    status: { $in: ['pending', 'cancelled', 'failed'] },
+  }).sort({ createdAt: -1 });
 
-  if (existingPending) {
+  if (existingPayment && existingPayment.status === 'pending') {
     // Retrieve the session to check if it's still valid
     try {
-      const session = await stripeService.retrieveCheckoutSession(existingPending.stripeCheckoutSessionId);
+      const session = await stripeService.retrieveCheckoutSession(existingPayment.stripeCheckoutSessionId);
       if (session.status === 'open') {
-        return { sessionId: session.id, url: session.url! };
+        return { sessionId: session.id, checkoutUrl: session.url! };
       }
     } catch {
       // Session expired or invalid, create a new one
     }
   }
 
-  // Mark trip as pending payment
-  await Trip.findByIdAndUpdate(tripId, { paymentStatus: 'pending' });
-
+  // Create new Stripe checkout session
   const session = await stripeService.createTripPlanCheckoutSession({
     userId,
     tripId,
@@ -59,24 +57,35 @@ export const createTripPlanCheckout = async (
     cancelUrl: `${config.CLIENT_URL}/payment/cancel?tripId=${tripId}`,
   });
 
-  // Create payment record
-  await Payment.create({
-    userId: new Types.ObjectId(userId),
-    tripId: new Types.ObjectId(tripId),
-    stripeCheckoutSessionId: session.id,
-    productType: 'trip_plan',
-    amount: config.TRIP_PLAN_PRICE_CENTS,
-    currency: config.TRIP_PLAN_CURRENCY,
-    status: 'pending',
-  });
+  if (existingPayment) {
+    // Update existing payment record with new session ID instead of creating a duplicate
+    existingPayment.stripeCheckoutSessionId = session.id;
+    existingPayment.status = 'pending';
+    existingPayment.amount = config.TRIP_PLAN_PRICE_CENTS;
+    existingPayment.currency = config.TRIP_PLAN_CURRENCY;
+    existingPayment.paidAt = null;
+    await existingPayment.save();
+  } else {
+    // Create new payment record
+    await Payment.create({
+      userId: new Types.ObjectId(userId),
+      tripId: new Types.ObjectId(tripId),
+      stripeCheckoutSessionId: session.id,
+      productType: 'trip_plan',
+      amount: config.TRIP_PLAN_PRICE_CENTS,
+      currency: config.TRIP_PLAN_CURRENCY,
+      status: 'pending',
+    });
+  }
 
-  return { sessionId: session.id, url: session.url! };
+  // Do NOT set Trip.paymentStatus to pending — keep it unpaid until Stripe confirms
+  return { sessionId: session.id, checkoutUrl: session.url! };
 };
 
 export const verifyTripPlanPayment = async (
   sessionId: string,
   userId: string,
-): Promise<{ payment: IPayment; trip: InstanceType<typeof Trip> }> => {
+): Promise<{ tripId: string; isPlanPurchased: boolean; paymentStatus: string; purchasedAt: Date | null }> => {
   // Retrieve session from Stripe
   const session = await stripeService.retrieveCheckoutSession(sessionId);
 
@@ -121,12 +130,19 @@ export const verifyTripPlanPayment = async (
     throw ApiError.forbidden('You can only verify payments for your own trips');
   }
 
+  const wasAlreadyPaid = trip.isPlanPurchased && trip.paymentStatus === 'paid';
+
   // Find or update payment record (idempotent)
   let payment = await Payment.findOne({ stripeCheckoutSessionId: sessionId });
 
   if (payment && payment.status === 'paid') {
-    // Already processed - return existing
-    return { payment, trip };
+    // Already processed — return existing successful result
+    return {
+      tripId: trip._id.toString(),
+      isPlanPurchased: true,
+      paymentStatus: 'paid',
+      purchasedAt: trip.purchasedAt,
+    };
   }
 
   if (!payment) {
@@ -152,26 +168,34 @@ export const verifyTripPlanPayment = async (
   }
 
   // Update trip (idempotent)
-  if (!trip.isPlanPurchased) {
-    await Trip.findByIdAndUpdate(tripId, {
-      paymentStatus: 'paid',
-      isPlanPurchased: true,
-      purchasedAt: new Date(),
+  const purchasedAt = trip.purchasedAt || new Date();
+  await Trip.findByIdAndUpdate(tripId, {
+    paymentStatus: 'paid',
+    isPlanPurchased: true,
+    purchasedAt,
+  });
+
+  // Send notification only once (not on repeated verification)
+  if (!wasAlreadyPaid) {
+    safeNotify({
+      userId,
+      type: 'payment_completed',
+      title: 'Trip Plan Purchased',
+      message: 'Your AI trip plan has been purchased. You can now generate your itinerary.',
+      relatedEntityType: 'trip',
+      relatedEntityId: tripId,
+      metadata: { tripId, amount: payment.amount, currency: payment.currency },
     });
   }
 
-  // Send notification (only once - check if already paid)
-  safeNotify({
-    userId,
-    type: 'payment_completed',
-    title: 'Trip Plan Purchased',
-    message: 'Your AI trip plan has been purchased. You can now generate your itinerary.',
-    relatedEntityType: 'trip',
-    relatedEntityId: tripId,
-    metadata: { tripId, amount: payment.amount, currency: payment.currency },
-  });
-
-  return { payment, trip: trip as InstanceType<typeof Trip> };
+  // Retrieve and return the updated Trip document
+  const updatedTrip = await Trip.findById(tripId);
+  return {
+    tripId: updatedTrip!._id.toString(),
+    isPlanPurchased: updatedTrip!.isPlanPurchased,
+    paymentStatus: updatedTrip!.paymentStatus,
+    purchasedAt: updatedTrip!.purchasedAt,
+  };
 };
 
 export const getTripPaymentStatus = async (

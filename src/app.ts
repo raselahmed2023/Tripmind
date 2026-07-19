@@ -62,7 +62,7 @@ const generalLimiter = rateLimit({
 });
 app.use(generalLimiter);
 
-// Strict rate limiter for auth endpoints
+// Strict rate limiter for auth endpoints (register, login, refresh, google/exchange only)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -80,7 +80,7 @@ const aiLimiter = rateLimit({
   message: { success: false, message: 'AI generation rate limit exceeded, please wait before trying again' },
 });
 
-// Strict rate limiter for payment checkout
+// Strict rate limiter for payment checkout/verify only
 const paymentLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -91,14 +91,26 @@ const paymentLimiter = rateLimit({
 
 // Routes
 app.use('/api/v1', healthRoutes);
-app.use('/api/v1/auth', authLimiter, authRoutes);
+
+// Auth: strict limiter only on specific mutation endpoints
+app.use('/api/v1/auth/register', authLimiter);
+app.use('/api/v1/auth/login', authLimiter);
+app.use('/api/v1/auth/refresh', authLimiter);
+app.use('/api/v1/auth/google/exchange', authLimiter);
+app.use('/api/v1/auth', authRoutes);
+
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/destinations', destinationRoutes);
 app.use('/api/v1/trips', tripRoutes);
 app.use('/api/v1/itineraries', itineraryRoutes);
 app.use('/api/v1/ai', aiLimiter, aiRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/payments', paymentLimiter, paymentRoutes);
+
+// Payments: strict limiter only on checkout and verify
+app.use('/api/v1/payments/trip-plan/checkout', paymentLimiter);
+app.use('/api/v1/payments/trip-plan/verify', paymentLimiter);
+app.use('/api/v1/payments', paymentRoutes);
+
 app.use('/api/v1/ai-assistant', assistantRoutes);
 
 // 404 handler (must be after all routes)
