@@ -48,7 +48,10 @@ export const updateTripSchema = z.object({
     }
     return true;
   },
-  { message: 'End date must be after start date', path: ['endDate'] },
+  {
+  message: 'End date must be on or after start date',
+  path: ['endDate'],
+},
 );
 
 export const tripQuerySchema = z.object({
