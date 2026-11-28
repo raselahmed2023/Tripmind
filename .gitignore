@@ -10,4 +10,3 @@ coverage/
 
 .env.*.local
 !.env.example
-config.bat
